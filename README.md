@@ -11,7 +11,7 @@ You can also:
 - ⭐ Star this repo to show your interest/support.
 - 📫 Stay updated by subscribing to our [email list](https://torquetech.dev).
 
-If you just want to start using _Torque_, just email us at team@torquetech.dev
+If you would like to start using _Torque_ for your project(s), we would love to hear how you plan to use it. Email us at team@torquetech.dev
 
 ## LICENSE note
 
