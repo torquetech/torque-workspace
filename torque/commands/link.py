@@ -5,7 +5,6 @@
 """TODO"""
 
 import argparse
-import sys
 
 from torque import v1
 from torque import workspace
@@ -20,13 +19,15 @@ def _create(arguments: argparse.Namespace):
     if arguments.no_suffix and not arguments.name:
         raise v1.exceptions.RuntimeError("if --no-suffix is specified, name must be supplied")
 
-    ws.create_link(arguments.name,
-                   arguments.type,
-                   params,
-                   arguments.source,
-                   arguments.destination,
-                   arguments.no_suffix)
+    link = ws.create_link(arguments.name,
+                          arguments.type,
+                          params,
+                          arguments.source,
+                          arguments.destination,
+                          arguments.no_suffix)
     ws.store()
+
+    print(link.name)
 
 
 def _remove(arguments: argparse.Namespace):
@@ -44,7 +45,7 @@ def _show(arguments: argparse.Namespace):
     ws = workspace.load(arguments.workspace)
     link = ws.get_link(arguments.name)
 
-    print(f"{link}", file=sys.stdout)
+    print(link)
 
 
 def _list(arguments: argparse.Namespace):
@@ -55,7 +56,7 @@ def _list(arguments: argparse.Namespace):
     ws = workspace.load(arguments.workspace)
 
     for link in ws.dag.links.values():
-        print(f"{link}", file=sys.stdout)
+        print(link)
 
 
 def _show_type(arguments: argparse.Namespace):
@@ -64,7 +65,7 @@ def _show_type(arguments: argparse.Namespace):
     ws = workspace.load(arguments.workspace)
 
     link_type = ws.repo.link(arguments.name)
-    print(f"{arguments.name}: {link_type}", file=sys.stdout)
+    print(f"{arguments.name}: {link_type}")
 
 
 def _list_types(arguments: argparse.Namespace):
@@ -76,7 +77,7 @@ def _list_types(arguments: argparse.Namespace):
     link_types = ws.repo.links()
 
     for link in link_types:
-        print(f"{link}: {link_types[link]}", file=sys.stdout)
+        print(f"{link}: {link_types[link]}")
 
 
 def add_arguments(subparsers):

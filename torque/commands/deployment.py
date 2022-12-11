@@ -8,6 +8,8 @@
 import argparse
 import sys
 
+import yaml
+
 from torque import v1
 from torque import workspace
 
@@ -30,6 +32,8 @@ def _create(arguments: argparse.Namespace):
     deployment.store()
 
     ws.store()
+
+    print(d.name)
 
 
 def _remove(arguments: argparse.Namespace):
@@ -57,7 +61,7 @@ def _show(arguments: argparse.Namespace):
     ws = workspace.load(arguments.workspace, arguments.deployments)
     deployment = ws.load_deployment(arguments.name, False)
 
-    print(f"{deployment}", file=sys.stdout)
+    print(deployment)
 
 
 def _list(arguments: argparse.Namespace):
@@ -66,7 +70,7 @@ def _list(arguments: argparse.Namespace):
     ws = workspace.load(arguments.workspace, arguments.deployments)
 
     for deployment in ws.deployments.values():
-        print(f"{deployment}", file=sys.stdout)
+        print(deployment)
 
 
 def _build(arguments: argparse.Namespace):
@@ -89,7 +93,7 @@ def _apply(arguments: argparse.Namespace):
     deployment = ws.load_deployment(arguments.name)
 
     try:
-        deployment.apply(arguments.workers, arguments.show_secrets)
+        deployment.apply(arguments.workers)
 
     finally:
         deployment.store()
@@ -108,13 +112,38 @@ def _delete(arguments: argparse.Namespace):
         deployment.store()
 
 
+def _get(arguments: argparse.Namespace):
+    """TODO"""
+
+    ws = workspace.load(arguments.workspace, arguments.deployments)
+
+    deployment = ws.load_deployment(arguments.name)
+    data = deployment.load_object(arguments.object)
+
+    yaml.safe_dump(data,
+                   stream=sys.stdout,
+                   default_flow_style=False,
+                   sort_keys=False)
+
+
+def _set(arguments: argparse.Namespace):
+    """TODO"""
+
+    ws = workspace.load(arguments.workspace, arguments.deployments)
+
+    deployment = ws.load_deployment(arguments.name)
+    data = yaml.safe_load(sys.stdin)
+
+    deployment.store_object(arguments.object, data)
+
+
 def _dot(arguments: argparse.Namespace):
     """TODO"""
 
     ws = workspace.load(arguments.workspace, arguments.deployments)
 
     deployment = ws.load_deployment(arguments.name)
-    print(deployment.dot(), file=sys.stdout)
+    print(deployment.dot())
 
 
 def add_arguments(subparsers):
@@ -176,13 +205,18 @@ def add_arguments(subparsers):
                               type=int,
                               default=1,
                               help="number of build workers to use, default: %(default)s")
-    apply_parser.add_argument("--show-secrets",
-                              action="store_true",
-                              help="show secrets when done")
     apply_parser.add_argument("name", help="deployment name")
 
     delete_parser = subparsers.add_parser("delete", help="delete deployment")
     delete_parser.add_argument("name", help="deployment name")
+
+    get_parser = subparsers.add_parser("get", help="get context object")
+    get_parser.add_argument("name", help="deployment name")
+    get_parser.add_argument("object", help="object name")
+
+    set_parser = subparsers.add_parser("set", help="set context object")
+    set_parser.add_argument("name", help="deployment name")
+    set_parser.add_argument("object", help="object name")
 
     dot_parser = subparsers.add_parser("dot", help="generate dot file")
     dot_parser.add_argument("name", help="deployment name")
@@ -202,6 +236,8 @@ def run(arguments: argparse.Namespace, unparsed_argv: [str]):
         "build": _build,
         "apply": _apply,
         "delete": _delete,
+        "get": _get,
+        "set": _set,
         "dot": _dot
     }
 

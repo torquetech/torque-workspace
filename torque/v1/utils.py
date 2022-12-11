@@ -144,14 +144,19 @@ T = typing.TypeVar("T")
 class Future(typing.Generic[T]):
     """TODO"""
 
-    def __init__(self, callback: typing.Callable):
-        self._callback = callback
+    def __init__(self, obj: object):
+        self._obj = obj
         self._cached_value = None
 
     def __call__(self):
-        if self._callback:
-            self._cached_value = self._callback()
-            self._callback = None
+        if self._cached_value:
+            return self._cached_value
+
+        if callable(self._obj):
+            self._cached_value = self._obj()
+
+        else:
+            self._cached_value = self._obj
 
         return self._cached_value
 
@@ -218,13 +223,13 @@ def wait_for(cond_fn: typing.Callable, message: str, interval: int = 10):
     while True:
         if ndx == 4:
             blanks = " " * (ndx + len(message))
-            print(f"\r{blanks}\r{message}", end="", file=sys.stdout)
+            print(f"\r{blanks}\r{message}", end="")
 
             ndx = 1
 
         else:
             dots = "." * ndx
-            print(f"\r{message}{dots}", end="", file=sys.stdout)
+            print(f"\r{message}{dots}", end="")
 
             ndx += 1
 
@@ -239,4 +244,4 @@ def wait_for(cond_fn: typing.Callable, message: str, interval: int = 10):
             last_ts = time.time()
 
     if ndx != 0:
-        print("." * (4 - ndx), file=sys.stdout)
+        print("." * (4 - ndx))
