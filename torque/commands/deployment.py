@@ -19,21 +19,17 @@ def _create(arguments: argparse.Namespace):
 
     ws = workspace.load(arguments.workspace, arguments.deployments)
 
-    d = ws.create_deployment(arguments.name,
-                             arguments.context,
-                             arguments.provider,
-                             arguments.extra_configs,
-                             arguments.components,
-                             arguments.strict,
-                             arguments.no_suffix)
-    deployment = ws.load_deployment(d.name, False)
-
-    deployment.update()
-    deployment.store()
-
+    deployment = ws.create_deployment(arguments.name,
+                                      arguments.context,
+                                      arguments.providers,
+                                      arguments.extra_configs,
+                                      arguments.filters,
+                                      arguments.components,
+                                      arguments.strict,
+                                      arguments.no_suffix)
     ws.store()
 
-    print(d.name)
+    print(deployment.name)
 
 
 def _remove(arguments: argparse.Namespace):
@@ -55,13 +51,16 @@ def _update(arguments: argparse.Namespace):
     deployment.store()
 
 
-def _show(arguments: argparse.Namespace):
+def _describe(arguments: argparse.Namespace):
     """DOCSTRING"""
 
     ws = workspace.load(arguments.workspace, arguments.deployments)
-    deployment = ws.load_deployment(arguments.name, False)
+    deployment = ws.get_deployment(arguments.name)
 
-    print(deployment)
+    yaml.safe_dump(deployment.describe(),
+                   stream=sys.stdout,
+                   default_flow_style=False,
+                   sort_keys=False)
 
 
 def _list(arguments: argparse.Namespace):
@@ -69,8 +68,10 @@ def _list(arguments: argparse.Namespace):
 
     ws = workspace.load(arguments.workspace, arguments.deployments)
 
-    for deployment in ws.deployments.values():
-        print(deployment)
+    yaml.safe_dump(sorted(list(ws.deployments)),
+                   stream=sys.stdout,
+                   default_flow_style=False,
+                   sort_keys=False)
 
 
 def _build(arguments: argparse.Namespace):
@@ -166,6 +167,11 @@ def add_arguments(subparsers):
     create_parser.add_argument("--context",
                                default="torque.defaults.V1LocalContext",
                                help="deployment context, default: %(default)s")
+    create_parser.add_argument("--provider", "-p",
+                               action="append",
+                               metavar="PROVIDER",
+                               dest="providers",
+                               help="provider name")
     create_parser.add_argument("--extra-config",
                                action="append",
                                metavar="CONFIG",
@@ -176,11 +182,15 @@ def add_arguments(subparsers):
                                metavar="COMPONENT",
                                dest="components",
                                help="component")
+    create_parser.add_argument("--filter",
+                               action="append",
+                               metavar="FILTER",
+                               dest="filters",
+                               help="filter")
     create_parser.add_argument("--no-suffix",
                                action="store_true",
                                help="don't append unique suffix to the name")
     create_parser.add_argument("name", help="deployment name")
-    create_parser.add_argument("provider", nargs="+", help="provider name")
 
     remove_parser = subparsers.add_parser("remove", help="remove deployment")
     remove_parser.add_argument("name", help="deployment name")
@@ -188,8 +198,8 @@ def add_arguments(subparsers):
     update_parser = subparsers.add_parser("update", help="update deployment")
     update_parser.add_argument("name", help="deployment name")
 
-    show_parser = subparsers.add_parser("show", help="show deployment")
-    show_parser.add_argument("name", help="deployment name")
+    describe_parser = subparsers.add_parser("describe", help="describe deployment")
+    describe_parser.add_argument("name", help="deployment name")
 
     subparsers.add_parser("list", help="list deployments")
 
@@ -231,7 +241,7 @@ def run(arguments: argparse.Namespace, unparsed_argv: [str]):
         "create": _create,
         "remove": _remove,
         "update": _update,
-        "show": _show,
+        "describe": _describe,
         "list": _list,
         "build": _build,
         "apply": _apply,

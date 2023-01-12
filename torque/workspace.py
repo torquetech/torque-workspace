@@ -6,20 +6,20 @@
 
 import os
 import re
-import sys
 
 import pytrie
 import yaml
 
+from torque import dag
 from torque import deployment
 from torque import exceptions
 from torque import interfaces
-from torque import model
 from torque import repository
 from torque import v1
 
 
 _NAME = re.compile(r"^[a-z-][a-z0-9-]*$")
+_KEY = re.compile(r"^[a-z0-9.\-_/]+$")
 
 _MAX_DEPLOYMENT_NAME_LENGTH = 16
 _MAX_COMPONENT_NAME_LENGTH = 32
@@ -32,7 +32,8 @@ _WORKSPACE_SCHEMA = v1.schema.Schema({
         "components": {
             v1.schema.Optional(str): {
                 "type": str,
-                "parameters": dict
+                "parameters": dict,
+                "labels": [str]
             }
         },
         "links": {
@@ -40,7 +41,8 @@ _WORKSPACE_SCHEMA = v1.schema.Schema({
                 "type": str,
                 "source": str,
                 "destination": str,
-                "parameters": dict
+                "parameters": dict,
+                "labels": [str]
             }
         }
     }
@@ -57,6 +59,7 @@ _DEPLOYMENTS_SCHEMA = v1.schema.Schema({
             "strict": bool,
             "providers": [str],
             "extra_configuration": [str],
+            "filters": v1.schema.Or([str], None),
             "components": v1.schema.Or([str], None)
         }
     }
@@ -73,6 +76,7 @@ class Deployment:
                  strict: bool,
                  providers: str,
                  extra_configs: [str],
+                 filters: [str],
                  components: [str]):
         self.name = name
         self.context_type = context_type
@@ -80,28 +84,63 @@ class Deployment:
         self.strict = strict
         self.providers = providers
         self.extra_configs = extra_configs
+        self.filters = filters
         self.components = components
 
-    def __repr__(self) -> str:
-        return \
-            f"Deployment({self.name}" \
-            f", context_type={self.context_type}" \
-            f", providers={self.providers}" \
-            f", components={self.components})"
+    def describe(self) -> dict[str, object]:
+        """DOCSTRING"""
+
+        return {
+            "name": self.name,
+            "context": {
+                "type": self.context_type,
+                "configuration": self.context_config
+            },
+            "strict": self.strict,
+            "providers": self.providers,
+            "extra_configs": self.extra_configs,
+            "filters": self.filters,
+            "components": self.components
+        }
 
 
-def _from_components(components: dict[str, model.Component]) -> dict[str, object]:
+def _from_key_value_pairs(pairs: [str]) -> dict[str, str]:
+    """DOCSTRING"""
+
+    if not pairs:
+        return {}
+
+    _pairs = {}
+
+    for p in pairs:
+        ndx = p.index("=")
+
+        key = p[:ndx]
+        value = p[ndx+1:]
+
+        if not _KEY.match(key):
+            raise v1.exceptions.RuntimeError(f"{key}: invalid key")
+
+        _pairs[key] = value
+
+    return _pairs
+
+
+def _from_components(components: dict[str, dag.Component]) -> dict[str, object]:
     """DOCSTRING"""
 
     return {
         component.name: {
             "type": component.type,
-            "parameters": component.parameters
+            "parameters": component.parameters,
+            "labels": [
+                f"{name}={value}" for name, value in component.labels.items()
+            ]
         } for component in components.values()
     }
 
 
-def _from_links(links: dict[str, model.Link]) -> dict[str, object]:
+def _from_links(links: dict[str, dag.Link]) -> dict[str, object]:
     """DOCSTRING"""
 
     return {
@@ -109,7 +148,10 @@ def _from_links(links: dict[str, model.Link]) -> dict[str, object]:
             "type": link.type,
             "source": link.source,
             "destination": link.destination,
-            "parameters": link.parameters
+            "parameters": link.parameters,
+            "labels": [
+                f"{name}={value}" for name, value in link.labels.items()
+            ]
         } for link in links.values()
     }
 
@@ -126,61 +168,106 @@ def _from_deployments(deployments: dict[str, Deployment]) -> dict[str, object]:
                     "configuration": deployment.context_config
                 },
                 "strict": deployment.strict,
-                "providers": deployment.providers,
+                "providers": deployment.providers or [],
                 "extra_configuration": deployment.extra_configs or [],
+                "filters": deployment.filters,
                 "components": deployment.components
             } for deployment in deployments.values()
         }
     }
 
 
-def _generate_dag(workspace: dict[str, object]):
-    """DOCSTRING"""
-
-    workspace_dag = workspace["dag"]
-    dag = model.DAG(workspace_dag["revision"])
-
-    for name, component in workspace_dag["components"].items():
-        dag.create_component(name,
-                             component["type"],
-                             component["parameters"])
-
-    for name, link in workspace_dag["links"].items():
-        dag.create_link(name,
-                        link["type"],
-                        link["source"],
-                        link["destination"],
-                        link["parameters"])
-
-    dag.verify()
-
-    return dag
-
-
-class _DummyInterfaceImplementation:
-    """DOCSTRING"""
-
-    def __getattribute__(self, attr):
-        """TOOD"""
-
-        return None
-
-
 class Workspace:
     """DOCSTRING"""
 
-    def __init__(self,
-                 workspace_path: str,
-                 deployments_path: str,
-                 deployments: dict[str, Deployment],
-                 dag: model.DAG,
-                 repo: repository.Repository):
-        self.dag = dag
-        self.repo = repo
-        self.deployments = deployments
-
+    def __init__(self, workspace_path: str, deployments_path: str):
         self._workspace_path = workspace_path
         self._deployments_path = deployments_path
+
+        self.repo = repository.load()
+
+        self.dag = None
+        self.deployments = None
+
+        self._generate_dag()
+        self._load_deployments()
+
+    def _load_workspace_dag(self) -> dict[str, object]:
+        """DOCSTRING"""
+
+        if os.path.exists(self._workspace_path):
+            with open(self._workspace_path, encoding="utf8") as file:
+                workspace = yaml.safe_load(file)
+
+        else:
+            workspace = {
+                "version": "torquetech.io/v1",
+                "dag": {
+                    "revision": 0,
+                    "components": {},
+                    "links": {}
+                }
+            }
+
+        workspace = _WORKSPACE_SCHEMA.validate(workspace)
+
+        if workspace["version"] != "torquetech.io/v1":
+            raise v1.exceptions.RuntimeError(f"{workspace['version']}: invalid workspace version")
+
+        return workspace["dag"]
+
+    def _generate_dag(self) -> dag.DAG:
+        """DOCSTRING"""
+
+        workspace = self._load_workspace_dag()
+        self.dag = dag.DAG(workspace["revision"])
+
+        for name, component in workspace["components"].items():
+            self.dag.create_component(name,
+                                      component["type"],
+                                      component["parameters"],
+                                      _from_key_value_pairs(component["labels"]))
+
+        for name, link in workspace["links"].items():
+            self.dag.create_link(name,
+                                 link["type"],
+                                 link["source"],
+                                 link["destination"],
+                                 link["parameters"],
+                                 _from_key_value_pairs(link["labels"]))
+
+        self.dag.verify()
+
+    def _load_deployments(self):
+        """DOCSTRING"""
+
+        self.deployments = {}
+
+        if not self._deployments_path:
+            return
+
+        if not os.path.exists(self._deployments_path):
+            return
+
+        with open(self._deployments_path, encoding="utf8") as file:
+            deployments = yaml.safe_load(file)
+
+        deployments = _DEPLOYMENTS_SCHEMA.validate(deployments)
+
+        if deployments["version"] != "torquetech.io/v1":
+            raise v1.exceptions.RuntimeError(f"{deployments['version']}: invalid deployments version")
+
+        self.deployments = {
+            name: Deployment(name,
+                             deployment["context"]["type"],
+                             deployment["context"]["configuration"],
+                             deployment["strict"],
+                             deployment["providers"],
+                             deployment["extra_configuration"],
+                             deployment["filters"],
+                             deployment["components"])
+            for name, deployment in deployments["deployments"].items()
+        }
 
     def _create_bond(self,
                      obj_type: type,
@@ -192,9 +279,9 @@ class Workspace:
 
         """DOCSTRING"""
 
-        return _DummyInterfaceImplementation()
+        return v1.component.DummyInterfaceImplementation()
 
-    def _component(self, component: model.Component):
+    def _component(self, component: dag.Component):
         """DOCSTRING"""
 
         type = self.repo.component(component.type)
@@ -210,7 +297,7 @@ class Workspace:
                     bound_interfaces)
 
     def _link(self,
-              link: model.Link,
+              link: dag.Link,
               source: v1.component.Component,
               destination: v1.component.Component) -> v1.link.Link:
         """DOCSTRING"""
@@ -230,23 +317,6 @@ class Workspace:
                     source.name,
                     destination.name,
                     bound_interfaces)
-
-    def _collect_components_for(self, name: str) -> [str]:
-        """DOCSTRING"""
-
-        deployment = self.deployments[name]
-
-        if deployment.components is None:
-            return None
-
-        components = set(deployment.components or [])
-        collected_components = set()
-
-        for component in self.dag.components.values():
-            if component.name in components:
-                collected_components.add(component.name)
-
-        return list(collected_components)
 
     def _get_full_component_name(self, name: str) -> str:
         """DOCSTRING"""
@@ -330,6 +400,7 @@ class Workspace:
                           context_type: str,
                           providers: [str],
                           extra_configs: [str],
+                          filters: [str],
                           components: [str],
                           strict: bool,
                           no_suffix: bool) -> Deployment:
@@ -363,6 +434,7 @@ class Workspace:
                                 strict,
                                 providers,
                                 extra_configs,
+                                filters,
                                 components)
 
         self.deployments[name] = deployment
@@ -389,11 +461,11 @@ class Workspace:
         if name not in self.deployments:
             raise exceptions.DeploymentNotFound(name)
 
-        components = self._collect_components_for(name)
         d = self.deployments[name]
 
         return deployment.load(d.name,
-                               components,
+                               d.filters,
+                               d.components,
                                d.context_type,
                                d.context_config,
                                strict if strict is not None else d.strict,
@@ -402,11 +474,18 @@ class Workspace:
                                self.dag,
                                self.repo)
 
+    def get_deployment(self, name: str) -> dag.Component:
+        """DOCSTRING"""
+
+        name = self._get_full_deployment_name(name)
+        return self.deployments[name]
+
     def create_component(self,
                          name: str,
                          type: str,
-                         params: object,
-                         no_suffix: bool) -> model.Component:
+                         parameters: [str],
+                         labels: [str],
+                         no_suffix: bool) -> dag.Component:
         # pylint: disable=W0622
 
         """DOCSTRING"""
@@ -420,15 +499,21 @@ class Workspace:
         if not no_suffix:
             name = f"{name}-{v1.utils.random_suffix(4)}"
 
+        parameters = _from_key_value_pairs(parameters)
+        labels = _from_key_value_pairs(labels)
+
         component_type = self.repo.component(type)
 
         try:
-            params = component_type.on_parameters(params)
+            parameters = component_type.on_parameters(parameters)
 
         except v1.schema.SchemaError as exc:
             raise v1.exceptions.RuntimeError(f"component parameters: {name}: {exc}") from exc
 
-        component = self.dag.create_component(name, type, params)
+        component = self.dag.create_component(name,
+                                              type,
+                                              parameters,
+                                              labels)
 
         instance = self._component(component)
         instance.on_create()
@@ -437,7 +522,7 @@ class Workspace:
 
         return component
 
-    def remove_component(self, name: str) -> model.Component:
+    def remove_component(self, name: str) -> dag.Component:
         """DOCSTRING"""
 
         name = self._get_full_component_name(name)
@@ -450,7 +535,7 @@ class Workspace:
 
         return component
 
-    def get_component(self, name: str) -> model.Component:
+    def get_component(self, name: str) -> dag.Component:
         """DOCSTRING"""
 
         name = self._get_full_component_name(name)
@@ -459,10 +544,11 @@ class Workspace:
     def create_link(self,
                     name: str,
                     type: str,
-                    params: object,
+                    parameters: [str],
+                    labels: [str],
                     source: str,
                     destination: str,
-                    no_suffix: bool) -> model.Link:
+                    no_suffix: bool) -> dag.Link:
         # pylint: disable=W0622,R0913
 
         """DOCSTRING"""
@@ -480,10 +566,13 @@ class Workspace:
             if not no_suffix:
                 name = f"{name}-{v1.utils.random_suffix(4)}"
 
+        parameters = _from_key_value_pairs(parameters)
+        labels = _from_key_value_pairs(labels)
+
         link_type = self.repo.link(type)
 
         try:
-            params = link_type.on_parameters(params)
+            parameters = link_type.on_parameters(parameters)
 
         except v1.schema.SchemaError as exc:
             raise v1.exceptions.RuntimeError(f"link parameters: {name}: {exc}") from exc
@@ -491,7 +580,12 @@ class Workspace:
         source = self._get_full_component_name(source)
         destination = self._get_full_component_name(destination)
 
-        link = self.dag.create_link(name, type, source, destination, params)
+        link = self.dag.create_link(name,
+                                    type,
+                                    source,
+                                    destination,
+                                    parameters,
+                                    labels)
 
         self.dag.verify()
 
@@ -505,7 +599,7 @@ class Workspace:
 
         return link
 
-    def remove_link(self, name: str) -> model.Link:
+    def remove_link(self, name: str) -> dag.Link:
         """DOCSTRING"""
 
         name = self._get_full_link_name(name)
@@ -521,7 +615,7 @@ class Workspace:
 
         return link
 
-    def get_link(self, name: str) -> model.Component:
+    def get_link(self, name: str) -> dag.Component:
         """DOCSTRING"""
 
         name = self._get_full_link_name(name)
@@ -568,37 +662,6 @@ class Workspace:
         self._store_deployments()
 
 
-def _load_deployments(path: str) -> dict[str, Deployment]:
-    """DOCSTRING"""
-
-    if not path:
-        return {}
-
-    path = v1.utils.resolve_path(path)
-
-    if not os.path.exists(path):
-        return {}
-
-    with open(path, encoding="utf8") as file:
-        deployments = yaml.safe_load(file)
-
-    deployments = _DEPLOYMENTS_SCHEMA.validate(deployments)
-
-    if deployments["version"] != "torquetech.io/v1":
-        raise v1.exceptions.RuntimeError(f"{deployments['version']}: invalid deployments version")
-
-    return {
-        name: Deployment(name,
-                         deployment["context"]["type"],
-                         deployment["context"]["configuration"],
-                         deployment["strict"],
-                         deployment["providers"],
-                         deployment["extra_configuration"],
-                         deployment["components"])
-        for name, deployment in deployments["deployments"].items()
-    }
-
-
 def load(workspace_path: str, deployments_path: str = None) -> Workspace:
     """DOCSTRING"""
 
@@ -609,62 +672,4 @@ def load(workspace_path: str, deployments_path: str = None) -> Workspace:
         deployments_path = v1.utils.torque_path(deployments_path)
         deployments_path = v1.utils.resolve_path(deployments_path)
 
-    if os.path.exists(workspace_path):
-        with open(workspace_path, encoding="utf8") as file:
-            workspace = yaml.safe_load(file)
-
-    else:
-        workspace = {
-            "version": "torquetech.io/v1",
-            "dag": {
-                "revision": 0,
-                "components": {},
-                "links": {}
-            }
-        }
-
-    workspace = _WORKSPACE_SCHEMA.validate(workspace)
-
-    if workspace["version"] != "torquetech.io/v1":
-        raise v1.exceptions.RuntimeError(f"{workspace['version']}: invalid workspace version")
-
-    deployments = _load_deployments(deployments_path)
-    repo = repository.load()
-    dag = _generate_dag(workspace)
-
-    return Workspace(workspace_path, deployments_path, deployments, dag, repo)
-
-
-def _load_params(path: str) -> object:
-    """DOCSTRING"""
-
-    if not path:
-        return {}
-
-    if path == "-":
-        params = sys.stdin.read()
-
-    else:
-        with open(path, encoding="utf8") as file:
-            params = file.read()
-
-    return yaml.safe_load(params)
-
-
-def process_parameters(path: str, params: [str]) -> object:
-    """DOCSTRING"""
-
-    _params = _load_params(path)
-
-    if not params:
-        return _params
-
-    for p in params:
-        ndx = p.index("=")
-
-        name = p[:ndx]
-        value = p[ndx+1:]
-
-        _params[name] = value
-
-    return _params
+    return Workspace(workspace_path, deployments_path)

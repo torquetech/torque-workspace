@@ -82,7 +82,10 @@ def main() -> int:
             "package": commands.package,
             "component": commands.component,
             "link": commands.link,
-            "deployment": commands.deployment
+            "deployment": commands.deployment,
+            "provider": commands.provider,
+            "bond": commands.bond,
+            "context": commands.context
         }
 
         for cmd in cmds.values():
@@ -98,19 +101,19 @@ def main() -> int:
         pass
 
     except exceptions.InternalError as exc:
-        if os.getenv("VERBOSE"):
+        if os.getenv("TORQUE_DEBUG"):
             traceback.print_exc()
 
         print(f"[CRITICAL]: {exc}", file=sys.stderr)
 
     except v1.exceptions.TorqueException as exc:
-        if os.getenv("VERBOSE"):
+        if os.getenv("TORQUE_DEBUG"):
             traceback.print_exc()
 
         print(exc, file=sys.stderr)
 
     except package.Exception as exc:
-        if os.getenv("VERBOSE"):
+        if os.getenv("TORQUE_DEBUG"):
             traceback.print_exc()
 
         print(exc, file=sys.stderr)

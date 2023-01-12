@@ -5,6 +5,7 @@
 """DOCSTRING"""
 
 import importlib
+import importlib.metadata
 import traceback
 import sys
 
@@ -83,20 +84,6 @@ _REPOSITORY_SCHEMA = v1.schema.Schema({
         ]
     })
 }, ignore_extra_keys=True)
-
-_DEFAULT_REPOSITORY = {
-    "v1": {
-        "contexts": {
-            v1.utils.fqcn(defaults.V1LocalContext): defaults.V1LocalContext
-        },
-        "components": {},
-        "links": {
-            v1.utils.fqcn(defaults.V1DependencyLink): defaults.V1DependencyLink
-        },
-        "providers": {},
-        "bonds": {}
-    }
-}
 
 
 class Repository:
@@ -212,7 +199,7 @@ def _process_items(repository: dict[str, object], name: str) -> dict[str, object
     """DOCSTRING"""
 
     if name not in repository["v1"]:
-        return repository
+        repository["v1"][name] = {}
 
     repository["v1"][name] = {
         v1.utils.fqcn(item): item
@@ -222,28 +209,55 @@ def _process_items(repository: dict[str, object], name: str) -> dict[str, object
     return repository
 
 
+def _package_repository(entry_point: importlib.metadata.EntryPoint) -> dict[str, object]:
+    """DOCSTRING"""
+
+    repository = entry_point.load()
+    repository = _REPOSITORY_SCHEMA.validate(repository)
+
+    repository = _process_items(repository, "contexts")
+    repository = _process_items(repository, "components")
+    repository = _process_items(repository, "links")
+    repository = _process_items(repository, "providers")
+    repository = _process_items(repository, "bonds")
+
+    return repository
+
+
+def package_repository(name: str) -> dict[str, object]:
+    """DOCSTRING"""
+
+    entry_points = importlib.metadata.entry_points()
+    entry_points = entry_points["torque"]
+
+    for e in entry_points:
+        if e.name == name:
+            return _package_repository(e)
+
+    return {
+        "v1": {
+            "contexts": {},
+            "components": {},
+            "links": {},
+            "providers": {},
+            "bonds": {}
+        }
+    }
+
+
 def load() -> Repository:
     """DOCSTRING"""
 
-    repository = {} | _DEFAULT_REPOSITORY
-
     entry_points = _system_repository()
     entry_points += _local_repository()
+
+    repository = {}
 
     for entry_point in entry_points:
         # pylint: disable=W0703
 
         try:
-            package_repository = entry_point.load()
-            package_repository = _REPOSITORY_SCHEMA.validate(package_repository)
-
-            package_repository = _process_items(package_repository, "contexts")
-            package_repository = _process_items(package_repository, "components")
-            package_repository = _process_items(package_repository, "links")
-            package_repository = _process_items(package_repository, "providers")
-            package_repository = _process_items(package_repository, "bonds")
-
-            repository = v1.utils.merge_dicts(repository, package_repository)
+            repository = v1.utils.merge_dicts(repository, _package_repository(entry_point))
 
         except v1.schema.SchemaError as exc:
             exc_str = str(exc)

@@ -10,10 +10,10 @@ import typing
 
 import yaml
 
+from torque import dag
 from torque import exceptions
 from torque import interfaces
 from torque import jobs
-from torque import model
 from torque import repository
 from torque import v1
 
@@ -91,6 +91,28 @@ def _validate_type_config(name: str, type: object, config: dict[str, object]):
         raise v1.exceptions.RuntimeError(f"{type} configuration: {name}:\n{exc_str}") from exc
 
 
+def _validate_type_params(name: str, type: object, params: dict[str, object]):
+    """DOCSTRING"""
+
+    try:
+        return type.on_parameters(params or {})
+
+    except v1.schema.SchemaError as exc:
+        if issubclass(type, v1.component.Component):
+            type = "component"
+
+        elif issubclass(type, v1.link.Link):
+            type = "link"
+
+        elif issubclass(type, v1.bond.Bond):
+            type = "bond"
+
+        exc_str = str(exc)
+        exc_str = " " + exc_str.replace("\n", "\n ")
+
+        raise v1.exceptions.RuntimeError(f"{type} parameters: {name}:\n{exc_str}") from exc
+
+
 def _validate_deployment_config(name: str, config: dict[str, object]) -> dict[str, object]:
     """DOCSTRING"""
 
@@ -102,15 +124,6 @@ def _validate_deployment_config(name: str, config: dict[str, object]) -> dict[st
         exc_str = " " + exc_str.replace("\n", "\n ")
 
         raise v1.exceptions.RuntimeError(f"deployment: {name}:\n{exc_str}") from exc
-
-
-class _DummyInterfaceImplementation:
-    """DOCSTRING"""
-
-    def __getattribute__(self, attr):
-        """TOOD"""
-
-        return None
 
 
 class _Configuration:
@@ -175,7 +188,7 @@ class Deployment:
     def __init__(self,
                  context: v1.deployment.Context,
                  configuration: _Configuration,
-                 dag: model.DAG,
+                 dag: dag.DAG,
                  repo: repository.Repository):
         # pylint: disable=R0913
 
@@ -287,7 +300,7 @@ class Deployment:
         """DOCSTRING"""
 
         if self._providers is None:
-            return _DummyInterfaceImplementation()
+            return v1.component.DummyInterfaceImplementation()
 
         if issubclass(obj_type, v1.component.Component):
             profile = self._configuration.component(obj_name)
@@ -331,17 +344,20 @@ class Deployment:
         component = self._dag.components[name]
         profile = self._configuration.component(name)
 
-        config = profile["configuration"]
         type = self._repo.component(component.type)
 
+        config = profile["configuration"]
+        params = component.parameters
+
         config = _validate_type_config(component.name, type, config)
+        params = _validate_type_params(component.name, type, params)
 
         bound_interfaces = interfaces.bind_to_component(type,
                                                         component.name,
                                                         self._create_bond)
 
         component = type(component.name,
-                         component.parameters,
+                         params,
                          config,
                          self._context,
                          bound_interfaces)
@@ -359,10 +375,13 @@ class Deployment:
         link = self._dag.links[name]
         profile = self._configuration.link(name)
 
-        config = profile["configuration"]
         type = self._repo.link(link.type)
 
+        config = profile["configuration"]
+        params = link.parameters
+
         config = _validate_type_config(link.name, type, config)
+        params = _validate_type_params(link.name, type, params)
 
         source = self._component(link.source)
         destination = self._component(link.destination)
@@ -374,7 +393,7 @@ class Deployment:
                                                    self._create_bond)
 
         link = type(link.name,
-                    link.parameters,
+                    params,
                     config,
                     self._context,
                     source.name,
@@ -543,7 +562,7 @@ def _provider_defaults(name: str,
     }
 
 
-def _component_defaults(component: model.Component,
+def _component_defaults(component: dag.Component,
                         repo: repository.Repository) -> dict[str, object]:
     """DOCSTRING"""
 
@@ -556,7 +575,7 @@ def _component_defaults(component: model.Component,
     }
 
 
-def _link_defaults(link: model.Link,
+def _link_defaults(link: dag.Link,
                    repo: repository.Repository) -> dict[str, object]:
     """DOCSTRING"""
 
@@ -570,7 +589,7 @@ def _link_defaults(link: model.Link,
 
 
 def _load_defaults(providers: [str],
-                   dag: model.DAG,
+                   dag: dag.DAG,
                    repo: repository.Repository) -> dict[str, object]:
     """DOCSTRING"""
 
@@ -628,7 +647,7 @@ def _load_defaults(providers: [str],
 
 def _load_configuration(context: v1.deployment.Context,
                         providers: [str],
-                        dag: model.DAG,
+                        dag: dag.DAG,
                         repo: repository.Repository,
                         strict: bool) -> dict[str, object]:
     """DOCSTRING"""
@@ -649,13 +668,14 @@ def _load_configuration(context: v1.deployment.Context,
 
 
 def load(name: str,
+         filters: [str],
          components: [str],
          context_type: str,
          context_config: dict,
          strict: bool,
          providers: [str],
          extra_configs: [str],
-         dag: model.DAG,
+         dag: dag.DAG,
          repo: repository.Repository) -> Deployment:
     # pylint: disable=R0913
 
@@ -683,9 +703,9 @@ def load(name: str,
 
         print(f"WARNING: {name}: deployment out of date", file=sys.stderr)
 
-    if components is not None and len(components) == 0:
-        raise exceptions.NoComponentsSelected()
+    dag = dag.filter(filters, components)
 
-    dag = dag.subset(components)
+    if dag.empty():
+        raise exceptions.DAGEmpty()
 
     return Deployment(context, config, dag, repo)

@@ -5,17 +5,24 @@
 """DOCSTRING"""
 
 import argparse
+import sys
 
+import yaml
+
+from torque import repository
 from torque import workspace
 
 
 def _create(arguments: argparse.Namespace):
     """DOCSTRING"""
 
-    params = workspace.process_parameters(arguments.params_file, arguments.params)
     ws = workspace.load(arguments.workspace)
 
-    component = ws.create_component(arguments.name, arguments.type, params, arguments.no_suffix)
+    component = ws.create_component(arguments.name,
+                                    arguments.type,
+                                    arguments.params,
+                                    arguments.labels,
+                                    arguments.no_suffix)
     ws.store()
 
     print(component.name)
@@ -30,13 +37,16 @@ def _remove(arguments: argparse.Namespace):
     ws.store()
 
 
-def _show(arguments: argparse.Namespace):
+def _describe(arguments: argparse.Namespace):
     """DOCSTRING"""
 
     ws = workspace.load(arguments.workspace)
     component = ws.get_component(arguments.name)
 
-    print(component)
+    yaml.safe_dump(component.describe(),
+                   stream=sys.stdout,
+                   default_flow_style=False,
+                   sort_keys=False)
 
 
 def _list(arguments: argparse.Namespace):
@@ -46,17 +56,22 @@ def _list(arguments: argparse.Namespace):
 
     ws = workspace.load(arguments.workspace)
 
-    for component in ws.dag.components.values():
-        print(component)
+    yaml.safe_dump(sorted(list(ws.dag.components)),
+                   stream=sys.stdout,
+                   default_flow_style=False,
+                   sort_keys=False)
 
 
-def _show_type(arguments: argparse.Namespace):
+def _describe_type(arguments: argparse.Namespace):
     """DOCSTRING"""
 
-    ws = workspace.load(arguments.workspace)
+    repo = repository.load()
+    component_type = repo.component(arguments.name)
 
-    component_type = ws.repo.component(arguments.name)
-    print(f"{arguments.name}: {component_type}")
+    yaml.safe_dump(component_type.describe(),
+                   stream=sys.stdout,
+                   default_flow_style=False,
+                   sort_keys=False)
 
 
 def _list_types(arguments: argparse.Namespace):
@@ -64,11 +79,12 @@ def _list_types(arguments: argparse.Namespace):
 
     """DOCSTRING"""
 
-    ws = workspace.load(arguments.workspace)
-    component_types = ws.repo.components()
+    repo = repository.load()
 
-    for component in component_types:
-        print(f"{component}: {component_types[component]}")
+    yaml.safe_dump(sorted(list(repo.components())),
+                   stream=sys.stdout,
+                   default_flow_style=False,
+                   sort_keys=False)
 
 
 def add_arguments(subparsers):
@@ -78,12 +94,16 @@ def add_arguments(subparsers):
     subparsers = parser.add_subparsers(required=True, dest="component_cmd", metavar="command")
 
     create_parser = subparsers.add_parser("create", help="create component")
-    create_parser.add_argument("--params-file", help="component parameters file")
     create_parser.add_argument("--param", "-p",
                                action="append",
                                metavar="NAME=VALUE",
                                dest="params",
                                help="component parameter")
+    create_parser.add_argument("--label", "-l",
+                               action="append",
+                               metavar="NAME=VALUE",
+                               dest="labels",
+                               help="component label")
     create_parser.add_argument("--no-suffix",
                                action="store_true",
                                help="don't append unique suffix to the name")
@@ -93,13 +113,14 @@ def add_arguments(subparsers):
     remove_parser = subparsers.add_parser("remove", help="remove component")
     remove_parser.add_argument("name", help="component name")
 
-    show_parser = subparsers.add_parser("show", help="show component")
-    show_parser.add_argument("name", help="component name")
+    describe_parser = subparsers.add_parser("describe", help="describe component")
+    describe_parser.add_argument("name", help="component name")
 
     subparsers.add_parser("list", help="list components")
 
-    show_type_parser = subparsers.add_parser("show-type", help="show component type")
-    show_type_parser.add_argument("name", help="component type name")
+    describe_type_parser = subparsers.add_parser("describe-type",
+                                                 help="describe component type")
+    describe_type_parser.add_argument("name", help="component type name")
 
     subparsers.add_parser("list-types", help="list component types")
 
@@ -112,9 +133,9 @@ def run(arguments: argparse.Namespace, unparsed_argv: [str]):
     cmds = {
         "create": _create,
         "remove": _remove,
-        "show": _show,
+        "describe": _describe,
         "list": _list,
-        "show-type": _show_type,
+        "describe-type": _describe_type,
         "list-types": _list_types
     }
 

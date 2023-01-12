@@ -21,11 +21,11 @@ def load_file(name: str) -> str:
 setup(name="torque-workspace",
       version=load_file("VERSION"),
       author="Torque Team",
-      author_email="team@torquetech.io",
+      author_email="team@torque.cloud",
       description="",
       long_description=load_file("README.md"),
       long_description_content_type="text/markdown",
-      url="https://github.com/torquetech/workspace",
+      url="https://github.com/torquetech/torque-workspace",
       license="MPL v2.0",
       classifiers=[
           "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)"
@@ -37,4 +37,9 @@ setup(name="torque-workspace",
           "pydot",
           "pytrie",
           "schema"
-      ])
+      ],
+      entry_points={
+          "torque": [
+              "torque-workspace=torque.defaults:repository"
+          ]
+      })
